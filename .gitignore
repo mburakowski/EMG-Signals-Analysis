@@ -8,6 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+myo-sdk-win-0.9.0/
 build/
 develop-eggs/
 dist/
