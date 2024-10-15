@@ -9,6 +9,7 @@ def read_mat_file(file_path):
         for key, value in mat_data.items():
             if not key.startswith('__'):
                 print(f"\nKlucz: {key}")
+                print(f"Kształt danych: {value.shape}")  # Dodanie wyświetlania kształtu danych
                 print(value)
         return mat_data
     except Exception as e:
@@ -24,8 +25,11 @@ def plot_full_width(data, index4D, window_title):
     for key in keys:
         dataset = data[key]
         if dataset.ndim == 4:
+            print(f"Rysowanie danych 4D: {key}, wybrany indeks: {index4D}")
+            # Zakładam, że chcesz narysować płaski sygnał dla konkretnego wymiaru, np. czasowy
             plt.plot(dataset[:, :, :, index4D].flatten(), label=key)
         else:
+            print(f"Rysowanie danych {dataset.ndim}D: {key}")
             plt.plot(dataset.flatten(), label=key)
     
     plt.title(window_title)
@@ -35,9 +39,10 @@ def plot_full_width(data, index4D, window_title):
 
 if __name__ == "__main__":
     #file_path = 'C:/Users/MaciejBurakowski(258/Desktop/praca_inz/osoba_2.mat'
-    file_path = 'C:/Users/MaciejBurakowski(258/Desktop/praca_inz/myo_data.mat'
+    file_path = 'C:/Users/MaciejBurakowski(258/Desktop/praca_inz/myo_segmented_data.mat'
+    #file_path = 'C:/Users/MaciejBurakowski(258/Desktop/praca_inz/myo_data.mat'
     
-    index4D = 0 
+    index4D = 0  # Możesz zmieniać indeks, aby zobaczyć inne ruchy lub sygnały
     
     data = read_mat_file(file_path)
     if data:
