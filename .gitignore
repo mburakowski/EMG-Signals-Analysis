@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+.mat
 # Distribution / packaging
 .Python
 myo-sdk-win-0.9.0/
