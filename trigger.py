@@ -5,7 +5,7 @@ import datetime
 import numpy as np
 
 class MyoListener(myo.DeviceListener):
-    def __init__(self, energy_threshold=50):
+    def __init__(self, energy_threshold=100):
         self.current_data = {
             'emg': [],
             'timestamps': []
@@ -14,15 +14,15 @@ class MyoListener(myo.DeviceListener):
             'emg': [],
             'timestamps': []
         }
-        self.energy_threshold = energy_threshold  # Próg energii dla wyzwalacza
-        self.active = False  # Flaga wyzwalacza, czy jesteśmy w trybie zapisu
+        self.energy_threshold = energy_threshold  
+        self.active = False 
 
     def on_paired(self, event):
         print("Myo is paired!")
         event.device.stream_emg(myo.StreamEmg.enabled)
 
     def on_unpaired(self, event):
-        return False  # Stop the hub
+        return False 
 
     def on_emg(self, event):
         emg = event.emg
@@ -49,8 +49,8 @@ class MyoListener(myo.DeviceListener):
             # Zakończenie, gdy energia spada poniżej progu
             print("Deactivation triggered - stopping data recording and storing the segment")
             self.active = False
-            self.store_segment()  # Przechowywanie segmentu danych
-            self.reset_current_data()  # Reset danych z bieżącego segmentu
+            self.store_segment()  
+            self.reset_current_data()  
 
     def calculate_energy(self, emg):
         """
