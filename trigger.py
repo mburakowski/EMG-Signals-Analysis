@@ -1,110 +1,141 @@
 import myo
-import time
-from scipy.io import savemat
 import datetime
+import threading
+from scipy.io import savemat
 import numpy as np
+from collections import deque
 
 class MyoListener(myo.DeviceListener):
-    def __init__(self, energy_threshold=100):
-        self.current_data = {
-            'emg': [],
-            'timestamps': []
-        }
-        self.all_data = {
-            'emg': [],
-            'timestamps': []
-        }
-        self.energy_threshold = energy_threshold  
-        self.active = False 
+    def __init__(self, window_size, overlap, trigger_threshold):
+        self.window_size = window_size
+        self.overlap = overlap
+        self.step_size = int(window_size * (1 - overlap))
+        self.trigger_threshold = trigger_threshold
+        
+        # Zwiększamy rozmiar buforów dla lepszej ciągłości
+        self.raw_buffer = deque(maxlen=2000)
+        self.timestamps_buffer = deque(maxlen=2000)
+        
+        # Dane wyzwolone
+        self.triggered_data = {'emg': [], 'timestamps': []}
+        self.is_recording = False
+        self.start_time = None
+        self.sample_count = 0
+        
+        # Bufor dla sprawdzania wyzwalacza
+        self.trigger_check_buffer = deque(maxlen=20)  # Zwiększony bufor sprawdzania
+        
+        print(f"\nParametry konfiguracji:")
+        print(f"- Rozmiar okna: {self.window_size} próbek")
+        print(f"- Nakładanie się okien: {self.overlap * 100}%")
+        print(f"- Przesunięcie między oknami: {self.step_size} próbek")
+        print(f"- Próg wyzwalacza: {self.trigger_threshold}\n")
+
+    def check_trigger(self):
+        """Sprawdź warunek wyzwalania z histerezą"""
+        if len(self.trigger_check_buffer) < self.trigger_check_buffer.maxlen:
+            return False
+            
+        # Liczba próbek powyżej progu
+        samples_above_threshold = 0
+        for sample in self.trigger_check_buffer:
+            if any(abs(x) > self.trigger_threshold for x in sample):
+                samples_above_threshold += 1
+        
+        # Wymagamy, aby 50% próbek w buforze było powyżej progu
+        return samples_above_threshold >= len(self.trigger_check_buffer) * 0.5
+
+    def save_continuous_window(self):
+        """Zapisz okno danych z zachowaniem ciągłości"""
+        if len(self.raw_buffer) >= self.window_size:
+            window_data = list(self.raw_buffer)[-self.window_size:]
+            window_times = list(self.timestamps_buffer)[-self.window_size:]
+            
+            self.triggered_data['emg'].append(window_data)
+            self.triggered_data['timestamps'].append(window_times)
+            self.sample_count += 1
+            
+            # Przesuwamy bufor o step_size, zachowując nakładanie
+            for _ in range(self.step_size):
+                if len(self.raw_buffer) > self.window_size:  # Zabezpieczenie przed opróżnieniem bufora
+                    self.raw_buffer.popleft()
+                    self.timestamps_buffer.popleft()
 
     def on_paired(self, event):
-        print("Myo is paired!")
+        print("Myo został sparowany!")
         event.device.stream_emg(myo.StreamEmg.enabled)
-
-    def on_unpaired(self, event):
-        return False 
+        self.start_time = datetime.datetime.now()
 
     def on_emg(self, event):
-        emg = event.emg
-        if emg:
-            # Wywołanie funkcji wyzwalacza
-            self.check_trigger(emg)
-        else:
-            print("No EMG data received!")
-
-    def check_trigger(self, emg):
-        """
-        Funkcja do wykrywania progu aktywacji na podstawie energii sygnału EMG.
-        """
-        energy = self.calculate_energy(emg)
-        print(f"Calculated energy: {energy}")
+        if self.start_time is None:
+            self.start_time = datetime.datetime.now()
+            
+        current_time = datetime.datetime.now().timestamp()
+        relative_time = current_time - self.start_time.timestamp()
         
-        if energy > self.energy_threshold:
-            if not self.active:
-                print("Activation triggered - starting to record data")
-                self.active = True  # Aktywacja, jeśli przekroczono próg
-            self.current_data['emg'].append(emg)
-            self.current_data['timestamps'].append(datetime.datetime.now().timestamp())
-        elif self.active:
-            # Zakończenie, gdy energia spada poniżej progu
-            print("Deactivation triggered - stopping data recording and storing the segment")
-            self.active = False
-            self.store_segment()  
-            self.reset_current_data()  
-
-    def calculate_energy(self, emg):
-        """
-        Oblicza energię sygnału EMG jako sumę kwadratów wartości EMG.
-        """
-        return sum([val**2 for val in emg])
-
-    def store_segment(self):
-        """
-        Przechowuje bieżący segment danych EMG do zbioru wszystkich danych.
-        """
-        if not self.current_data['emg']:
-            print("No data to store")
-            return
+        # Aktualizacja buforów
+        self.raw_buffer.append(event.emg)
+        self.timestamps_buffer.append(relative_time)
+        self.trigger_check_buffer.append(event.emg)
         
-        self.all_data['emg'].extend(self.current_data['emg'])
-        self.all_data['timestamps'].extend(self.current_data['timestamps'])
-        print(f"Stored {len(self.current_data['emg'])} EMG samples in total data.")
-
-    def reset_current_data(self):
-        """
-        Resetuje dane zebrane w trakcie aktywacji wyzwalacza.
-        """
-        self.current_data = {
-            'emg': [],
-            'timestamps': []
-        }
+        # Wyświetlanie danych
+        print(f"\rCzas: {relative_time:.2f}s | EMG: {' '.join(f'{x:4d}' for x in event.emg)} | {'NAGRYWANIE' if self.is_recording else 'OCZEKIWANIE'}", end='')
+        
+        # Sprawdzenie wyzwalacza
+        is_triggered = self.check_trigger()
+        
+        # Logika nagrywania
+        if not self.is_recording and is_triggered:
+            print("\nWyzwalacz aktywowany!")
+            self.is_recording = True
+            # Zapisz dane sprzed wyzwolenia (pre-trigger)
+            self.save_continuous_window()
+            
+        elif self.is_recording:
+            # Kontynuuj zapisywanie okien
+            self.save_continuous_window()
+            
+            # Sprawdź czy należy zakończyć nagrywanie
+            if not is_triggered:
+                print("\nKoniec wyzwolenia")
+                self.is_recording = False
+                self.save_data()
 
     def save_data(self, filename='myo_emg_data.mat'):
-        """
-        Zapisuje wszystkie dane EMG w formacie mat po zakończeniu zbierania.
-        """
-        print(f"Saving all EMG data to file {filename}...")
+        if not self.triggered_data['emg']:
+            print("\nBrak danych do zapisania")
+            return
+            
+        print(f"\nZapisuję dane...")
         segmented_data = {
-            'emg': np.array(self.all_data['emg']),
-            'timestamps': np.array(self.all_data['timestamps'])
+            'emg': np.array(self.triggered_data['emg']),
+            'timestamps': np.array(self.triggered_data['timestamps'])
         }
         savemat(filename, segmented_data)
-        print(f"All EMG data saved to {filename}")
-
+        print(f"Zapisano {self.sample_count} okien")
+        
 def main():
     myo.init()
     hub = myo.Hub()
-    listener = MyoListener()
+    
+    # Konfiguracja
+    config = {
+        'window_size': 50,
+        'overlap': 0.6,
+        'trigger_threshold': 30
+    }
+    
+    listener = MyoListener(**config)
 
     try:
+        print("Rozpoczynam nasłuchiwanie...")
         while True:
-            hub.run(listener.on_event, 500)
-            time.sleep(0.5)
+            hub.run(listener.on_event, 1)
     except KeyboardInterrupt:
-        print("Program interrupted")
+        print("\nProgram przerwany przez użytkownika")
     finally:
-        print("Shutting down Myo Hub")
-        listener.save_data()  # Zapisanie danych po zakończeniu
+        print("Zamykam Myo Hub")
+        listener.save_data()
 
 if __name__ == '__main__':
     main()
